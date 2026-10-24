@@ -1,6 +1,7 @@
 import std;
 
 #include "core/bytes.hpp"
+#include "core/fs.hpp"
 #include "core/text.hpp"
 #include "reader/biff.hpp"
 #include "reader/ole.hpp"
@@ -75,7 +76,8 @@ auto src_advance(StrSource& src) -> void {
 auto src_get_u8(StrSource& src) -> std::optional<std::uint8_t> {
   if (src.st_pos >= src.sp_cur.size()) {
     src_advance(src);
-    if (src.b_bad) {
+    if (src.b_bad || src.st_pos >= src.sp_cur.size()) {
+      src.b_bad = true;
       return std::nullopt;
     }
   }
@@ -126,7 +128,7 @@ auto read_xl_string(StrSource& src, std::uint16_t u2_cch,
       (u1_flags & 0x04) != 0 ? src_get_u4(src).value_or(0)
                              : std::uint32_t{0}};
   std::string str_out;
-  str_out.reserve(u2_cch);
+  str_out.reserve(std::size_t{u2_cch} * 3);
   for (std::uint16_t u2_i{0}; u2_i < u2_cch; ++u2_i) {
     if (src.b_bad) {
       break;
@@ -229,6 +231,11 @@ auto parse_globals(Workbook& wb) -> core::Result<void> {
       case Record::kCodepage:
         if (sp.size() >= 2) {
           wb.u2_codepage = u2_at(sp, 0);
+        }
+        break;
+      case Record::kDateMode:
+        if (sp.size() >= 2) {
+          wb.b_1904 = u2_at(sp, 0) != 0;
         }
         break;
       case Record::kWindow1:
@@ -377,24 +384,11 @@ auto parse_globals(Workbook& wb) -> core::Result<void> {
 }
 
 auto open_workbook_file(std::string_view str_path) -> core::Result<Workbook> {
-  std::ifstream fs_in{std::string{str_path}, std::ios::binary};
-  if (!fs_in) {
-    return core::fail(core::ErrorCode::kOpen, "unable to open file");
+  auto res_data{core::read_file_bytes(str_path)};
+  if (!res_data) {
+    return std::unexpected{res_data.error()};
   }
-  fs_in.seekg(0, std::ios::end);
-  const std::streamoff kst_len{fs_in.tellg()};
-  fs_in.seekg(0, std::ios::beg);
-  if (kst_len < 0) {
-    return core::fail(core::ErrorCode::kRead, "unable to stat file");
-  }
-  std::vector<std::byte> vec_data(static_cast<std::size_t>(kst_len));
-  if (kst_len > 0) {
-    fs_in.read(reinterpret_cast<char*>(vec_data.data()), kst_len);
-    if (fs_in.gcount() != kst_len) {
-      return core::fail(core::ErrorCode::kRead, "short read");
-    }
-  }
-  return open_workbook_buffer(vec_data);
+  return open_workbook_buffer(*res_data);
 }
 
 auto open_workbook_buffer(std::span<const std::byte> sp_data)
@@ -413,7 +407,7 @@ auto open_workbook_buffer(std::span<const std::byte> sp_data)
   if (!res_globals) {
     return std::unexpected{res_globals.error()};
   }
-  return wb;
+  return std::move(wb);
 }
 
 auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
@@ -498,8 +492,25 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
         return &cell;
       }};
 
+  const auto fn_find{[&](std::uint16_t ku2_row, std::uint16_t ku2_col) -> Cell* {
+    if (ku2_row >= ws.vec_rows.size()) {
+      return nullptr;
+    }
+    std::vector<Cell>& vec_cells{ws.vec_rows[ku2_row].vec_cells};
+    const auto it_find{std::lower_bound(
+        vec_cells.begin(), vec_cells.end(), ku2_col,
+        [](const Cell& cell, std::uint16_t ku2_key) {
+          return cell.u2_col < ku2_key;
+        })};
+    if (it_find != vec_cells.end() && it_find->u2_col == ku2_col) {
+      return &*it_find;
+    }
+    return nullptr;
+  }};
+
   bool b_pending_string{false};
-  Cell* p_pending{nullptr};
+  std::uint16_t ku2_pending_row{0};
+  std::uint16_t ku2_pending_col{0};
 
   for (const RecView& rec : vec_recs) {
     const std::span<const std::byte> sp{rec.sp_body};
@@ -642,7 +653,8 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
             const std::uint8_t ku1_kind{u1_at(sp, 6)};
             if (ku1_kind == 0) {
               b_pending_string = true;
-              p_pending = p;
+              ku2_pending_row = u2_at(sp, 0);
+              ku2_pending_col = u2_at(sp, 2);
             } else if (ku1_kind == 1) {
               p->b_bool = true;
               p->fp8_value = (u1_at(sp, 7) & 0x01) != 0 ? 1.0 : 0.0;
@@ -657,22 +669,37 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
         break;
       }
       case Record::kString: {
-        if (b_pending_string && p_pending != nullptr && sp.size() >= 3) {
+        if (b_pending_string && sp.size() >= 2) {
           const std::uint16_t ku2_cch{u2_at(sp, 0)};
-          const std::uint8_t ku1_flags{u1_at(sp, 2)};
-          const std::size_t kst_chars{
-              (ku1_flags & 0x01) != 0
-                  ? std::size_t{ku2_cch} * 2
-                  : std::size_t{ku2_cch}};
-          if (sp.size() >= 3 + kst_chars) {
-            p_pending->opt_str =
-                (ku1_flags & 0x01) != 0
-                    ? core::decode_utf16_span(sp.subspan(3, kst_chars))
-                    : core::decode_latin1_span(sp.subspan(3, kst_chars));
+          Cell* p_str{fn_find(ku2_pending_row, ku2_pending_col)};
+          if (p_str != nullptr) {
+            if (wb.b_biff5) {
+              if (sp.size() >= 2 + std::size_t{ku2_cch}) {
+                p_str->opt_str = core::decode_latin1_span(
+                    sp.subspan(2, ku2_cch));
+              }
+            } else if (sp.size() < 3) {
+              if (ku2_cch == 0) {
+                p_str->opt_str = std::string{};
+              }
+            } else {
+              const std::uint8_t ku1_flags{u1_at(sp, 2)};
+              const std::size_t kst_chars{
+                  (ku1_flags & 0x01) != 0
+                      ? std::size_t{ku2_cch} * 2
+                      : std::size_t{ku2_cch}};
+              if (sp.size() >= 3 + kst_chars) {
+                p_str->opt_str =
+                    (ku1_flags & 0x01) != 0
+                        ? core::decode_utf16_span(
+                              sp.subspan(3, kst_chars))
+                        : core::decode_latin1_span(
+                              sp.subspan(3, kst_chars));
+              }
+            }
           }
         }
         b_pending_string = false;
-        p_pending = nullptr;
         break;
       }
       case Record::kDefColWidth: {

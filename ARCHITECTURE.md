@@ -98,6 +98,12 @@ LibcppXls/
 | ADR-014 | 工作表网格稀疏化：每行 `std::vector<Cell>` 按列号升序存储 | 稠密 65536×256 网格按 `sizeof(Cell)` 约 64 字节计约 1 GB，实际文件即触发；稀疏存储内存正比于实际单元格数 |
 | ADR-015 | 单元测试 `Test/unit.cpp`（合成 BIFF/CFB 用例）入 CTest；交叉对拍脚本（xlrd、合成件）接入 `add_test`；CMake 增设 `CPPXLS_ASAN` / `CPPXLS_HARDENED` 编排预设 | 落实第六节三编排零告警门槛与 ADR-009 对拍标准；回归防线覆盖越界、恶意头、编码、稀疏网格等已修缺陷 |
 | ADR-016 | FORMULA 特殊结果判定维持单判据（结果高 16 位 == 0xFFFF），与对拍基准 xlrd 一致 | 完整判据应为结果字节 6/12 双处 0xFFFF；单判据会把位模式 `0xFFFF…` 的合法 NaN 判为特殊结果，但 xlrd 2.0.2 同此行为，1:1 对拍优先 |
+| ADR-017 | SST 跨 CONTINUE 读取修复：`src_get_u8` 换段后复查边界，1 字节 CONTINUE 体不再越界读相邻记录头（回归用例 `sst_continue_oob`） | 越界字节落在同一堆分配内部，ASan 与对拍均不可见，实证发生确定性数据污染（SST 读出记录头字节 `<`）；根因是 `src_advance` 置 `st_pos=1` 后调用方未复查段长 |
+| ADR-018 | BIFF5 STRING（FORMULA 字符串结果）按无 flags 字节布局解码（回归用例 `biff5_formula_string`）；新增 DATEMODE(0x0022) 解析落地 `b_1904`（回归用例 `datemode`） | BIFF5 STRING 为 `cch(2)+字符`、无 BIFF8 的 grbit；原实现误把首字符当 flags 导致整串丢失。`b_1904` 原为死字段，1904 纪元文件（xlrd datemode=1）误报 false |
+| ADR-019 | FAT 表加载后裁剪至文件实际扇区数 | 原表按 `fat_count×128` 项分配且仅校验扇区号小于表长：越界扇区在 `sector_span` 返回空后被 `concat_sectors` 静默跳过（目录流被截不报错）；裁剪后此类扇区显式报 `kParse`，FAT 内存从文件大小×4 字节量级收敛到实际扇区数×4 |
+| ADR-020 | FORMULA 待续字符串改以（行,列）坐标存储并于使用时重查；文件读取统一 `core::read_file_bytes`；OLE 文件路径单拷贝（`vec_data` 移动入 `OleFile`）；`expected` 返回显式 `std::move` | 原 `Cell*` 跨记录保存，同行 `vec_cells` 再分配（resize/insert/emplace_back）即悬垂，畸形记录序可触发释放后写；重复的读文件助手与整文件双份拷贝一并消除 |
+| ADR-021 | `bytes`/`text` 实现移入 `.cpp`（头文件仅声明，落实规范 §六）；硬化编排链接补 `-pie` 与 `--dynamicbase,--nxcompat`（规范 §一·五 MinGW 等价展开）；编译器门禁补 GCC 16+ 并拒 MSVC；交叉脚本显式 `encoding="utf-8"`、xlrd 缺失按退出码 77 SKIP | 规范「头文件仅放声明」「编译器 GCC 16+/Clang 21+」收口；`-fPIE` 编译不配 PIE 链接则旗级落空；`text=True` 默认按本地代码页解码 UTF-8 输出在非 ASCII 内容下必错 |
+| ADR-022 | 豁免登记：`Test/synth.hpp` 头内实现与 `ByteBuilder` 成员函数（测试脚手架）、库内函数局部短名变量（`wb`/`ws`/`rec` 等）按现行保留 | 测试脚手架改自由函数族收益低、徒增构建接线；短名均限于单函数作用域，可读性优先。命名前缀规则对跨作用域/成员变量仍全量执行 |
 
 ## 八、文档维护约定
 

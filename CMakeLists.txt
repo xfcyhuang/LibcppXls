@@ -6,10 +6,20 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-    AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 21)
-  message(FATAL_ERROR "LibcppXls requires Clang 21+, found "
-          "${CMAKE_CXX_COMPILER_VERSION}")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 21)
+    message(FATAL_ERROR "LibcppXls requires Clang 21+, found "
+            "${CMAKE_CXX_COMPILER_VERSION}")
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+    message(FATAL_ERROR "LibcppXls requires GCC 16+, found "
+            "${CMAKE_CXX_COMPILER_VERSION}")
+  endif()
+  message(WARNING "GCC toolchain: std.cppm discovery assumes llvm-mingw libc++ layout")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  message(FATAL_ERROR "LibcppXls does not support MSVC; "
+          "use Clang 21+ (llvm-mingw) or GCC 16+")
 endif()
 
 option(CPPXLS_ASAN "address+undefined sanitizer orchestration" OFF)
@@ -33,6 +43,7 @@ elseif(CPPXLS_HARDENED)
   list(APPEND CPPXLS_COMMON_FLAGS -D_FORTIFY_SOURCE=3
     -fstack-protector-strong -fPIE)
   list(APPEND CPPXLS_PCM_FLAGS -fstack-protector-strong)
+  list(APPEND CPPXLS_LINK_FLAGS -pie -Wl,--dynamicbase,--nxcompat)
 endif()
 
 get_filename_component(CPPXLS_BIN_DIR ${CMAKE_CXX_COMPILER} DIRECTORY)
@@ -53,6 +64,9 @@ set(CPPXLS_COMPILE_FLAGS ${CPPXLS_WARN_FLAGS} ${CPPXLS_COMMON_FLAGS}
   -fmodule-file=std=${CPPXLS_STD_PCM})
 
 add_library(cppxls STATIC
+  src/core/bytes.cpp
+  src/core/fs.cpp
+  src/core/text.cpp
   src/reader/ole.cpp
   src/reader/biff.cpp)
 add_dependencies(cppxls cppxls_std_pcm)
@@ -75,7 +89,8 @@ enable_testing()
 
 foreach(CPPXLS_CASE IN ITEMS label_oob font_oob boundsheet_oob format_oob
     sst_cont_flag dir_surrogate formula_nan masked_error dims_extent
-    grid_sparse merged_underflow bof_check hostile_fat)
+    grid_sparse merged_underflow bof_check hostile_fat sst_continue_oob
+    biff5_formula_string datemode)
   add_test(NAME ${CPPXLS_CASE} COMMAND xls_unit ${CPPXLS_CASE})
 endforeach()
 
@@ -87,7 +102,8 @@ if(Python3_Interpreter_FOUND)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Script/check_synth.py
             $<TARGET_FILE:xls_csv_dump>)
   set_tests_properties(cross_check_xlrd cross_check_synth PROPERTIES
-    ENVIRONMENT PYTHONIOENCODING=utf-8)
+    ENVIRONMENT PYTHONIOENCODING=utf-8
+    SKIP_RETURN_CODE 77)
 else()
   message(WARNING "Python3 not found, cross-check tests skipped")
 endif()

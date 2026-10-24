@@ -2,14 +2,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-import xlrd
+try:
+    import xlrd
+except ImportError:
+    print("SKIP: xlrd not installed")
+    raise SystemExit(77)
 
 ROOT = Path(__file__).resolve().parents[1]
 DUMP = ROOT / "Build" / "xls_csv_dump.exe"
 
 
 def dump_lines(path: Path) -> list[str]:
-    res = subprocess.run([str(DUMP), str(path)], capture_output=True, text=True)
+    res = subprocess.run([str(DUMP), str(path)], capture_output=True,
+                         text=True, encoding="utf-8")
     if res.returncode != 0:
         raise RuntimeError(res.stdout + res.stderr)
     return res.stdout.splitlines()

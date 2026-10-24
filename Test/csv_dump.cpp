@@ -22,6 +22,9 @@ auto cell_text(const cppxls::reader::Workbook& wb,
   if (cell.opt_str) {
     return quoted_text(*cell.opt_str);
   }
+  if (cell.e_id == cppxls::reader::Record::kLabel) {
+    return {};
+  }
   if (cell.b_err) {
     return "#ERR";
   }

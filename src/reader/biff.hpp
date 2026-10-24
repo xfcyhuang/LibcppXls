@@ -10,6 +10,7 @@ enum class Record : std::uint16_t {
   kFormula = 0x0006,
   kEof = 0x000A,
   kFilePass = 0x002F,
+  kDateMode = 0x0022,
   kContinue = 0x003C,
   kWindow1 = 0x003D,
   kCodepage = 0x0042,

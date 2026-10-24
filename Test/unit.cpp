@@ -291,6 +291,72 @@ auto case_bof_check() -> int {
   return 0;
 }
 
+auto case_sst_continue_oob() -> int {
+  ByteBuilder sst;
+  sst.u4(1).u4(1).u2(2).u1(0).raw("A");
+  ByteBuilder c1;
+  c1.u1(0);
+  ByteBuilder c2;
+  c2.u1(0).raw("B");
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), boundsheet(0), rec(0x00FC, sst.take()),
+       rec(0x003C, c1.take()), rec(0x003C, c2.take()), eof_rec(),
+       pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  if (wb.vec_sst.size() != 1 || wb.vec_sst[0] != "A") {
+    std::println("sst size {} [0]={}", wb.vec_sst.size(),
+                 wb.vec_sst.empty() ? "?" : wb.vec_sst[0]);
+    return 1;
+  }
+  return 0;
+}
+
+auto case_biff5_formula_string() -> int {
+  ByteBuilder bof5g;
+  bof5g.u2(0x0500).u2(0x0005);
+  ByteBuilder bof5s;
+  bof5s.u2(0x0500).u2(0x0010);
+  ByteBuilder formula;
+  formula.u2(0).u2(0).u2(0);
+  formula.u1(0).u1(0).u1(0).u1(0).u1(0).u1(0).u1(0xFF).u1(0xFF);
+  formula.u2(0).u4(0).u2(0);
+  ByteBuilder str;
+  str.u2(2).raw("AB");
+  const std::uint32_t ku4_pos{25};
+  const std::vector<std::byte> vec_stream{join(
+      {rec(0x0809, bof5g.take()), boundsheet(ku4_pos), eof_rec(),
+       rec(0x0809, bof5s.take()), rec(0x0006, formula.take()),
+       rec(0x0207, str.take()), eof_rec(), pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  auto res{cppxls::reader::parse_worksheet(wb, 0)};
+  if (!res) {
+    std::println("parse failed: {}", res.error().str_message);
+    return 1;
+  }
+  const cppxls::reader::Cell* p{sheet_cell(*res, 0, 0)};
+  if (p == nullptr || !p->opt_str || *p->opt_str != "AB") {
+    std::println("cell string {}",
+                 p != nullptr && p->opt_str ? *p->opt_str
+                                            : std::string{"<none>"});
+    return 1;
+  }
+  return 0;
+}
+
+auto case_datemode() -> int {
+  ByteBuilder dm;
+  dm.u2(1);
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), rec(0x0022, dm.take()), boundsheet(0), eof_rec(),
+       pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  if (!wb.b_1904) {
+    std::println("b_1904 false");
+    return 1;
+  }
+  return 0;
+}
+
 auto case_hostile_fat() -> int {
   std::vector<std::byte> vec_ole(512, std::byte{0});
   const std::array<std::uint8_t, 8> karr_sig{0xD0, 0xCF, 0x11, 0xE0,
@@ -363,6 +429,15 @@ auto main(int argc, char** argv) -> int {
   }
   if (str_case == "hostile_fat") {
     return case_hostile_fat();
+  }
+  if (str_case == "sst_continue_oob") {
+    return case_sst_continue_oob();
+  }
+  if (str_case == "biff5_formula_string") {
+    return case_biff5_formula_string();
+  }
+  if (str_case == "datemode") {
+    return case_datemode();
   }
   std::println("unknown case: {}", str_case);
   return 2;

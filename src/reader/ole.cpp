@@ -1,6 +1,7 @@
 import std;
 
 #include "core/bytes.hpp"
+#include "core/fs.hpp"
 #include "core/text.hpp"
 #include "reader/ole.hpp"
 
@@ -69,8 +70,8 @@ constexpr std::size_t kStDirEntry = 128;
   return std::ranges::equal(str_a, str_b, {}, fold_ascii, fold_ascii);
 }
 
-[[nodiscard]] auto parse_ole(std::span<const std::byte> sp_data)
-    -> core::Result<OleFile> {
+[[nodiscard]] auto load_ole(OleFile& ole) -> core::Result<void> {
+  const std::span<const std::byte> sp_data{ole.vec_data};
   if (sp_data.size() < 512) {
     return core::fail(core::ErrorCode::kParse, "ole header missing");
   }
@@ -82,8 +83,6 @@ constexpr std::size_t kStDirEntry = 128;
     }
   }
 
-  OleFile ole;
-  ole.vec_data.assign(sp_data.begin(), sp_data.end());
   const std::uint16_t ku2_sector_shift{u2_at(sp_data, 30)};
   const std::uint16_t ku2_mini_shift{u2_at(sp_data, 32)};
   if (ku2_sector_shift < 7 || ku2_sector_shift > 20 ||
@@ -152,6 +151,9 @@ constexpr std::size_t kStDirEntry = 128;
       ole.vec_fat[kst_base + st_i] = u4_at(sp_fat, st_i * 4);
     }
   }
+  if (ole.vec_fat.size() > static_cast<std::size_t>(ku8_sectors)) {
+    ole.vec_fat.resize(static_cast<std::size_t>(ku8_sectors));
+  }
 
   auto res_dir{fat_chain(ole.vec_fat, ku4_dir_start)};
   if (!res_dir) {
@@ -194,35 +196,34 @@ constexpr std::size_t kStDirEntry = 128;
           std::span<const std::byte>{vec_mini}, st_i * 4);
     }
   }
-  return ole;
+  return {};
 }
 
 }
 
 auto open_ole_file(std::string_view str_path) -> core::Result<OleFile> {
-  std::ifstream fs_in{std::string{str_path}, std::ios::binary};
-  if (!fs_in) {
-    return core::fail(core::ErrorCode::kOpen, "unable to open file");
+  auto res_data{core::read_file_bytes(str_path)};
+  if (!res_data) {
+    return std::unexpected{res_data.error()};
   }
-  fs_in.seekg(0, std::ios::end);
-  const std::streamoff kst_len{fs_in.tellg()};
-  fs_in.seekg(0, std::ios::beg);
-  if (kst_len < 0) {
-    return core::fail(core::ErrorCode::kRead, "unable to stat file");
+  OleFile ole;
+  ole.vec_data = std::move(*res_data);
+  auto res_load{load_ole(ole)};
+  if (!res_load) {
+    return std::unexpected{res_load.error()};
   }
-  std::vector<std::byte> vec_data(static_cast<std::size_t>(kst_len));
-  if (kst_len > 0) {
-    fs_in.read(reinterpret_cast<char*>(vec_data.data()), kst_len);
-    if (fs_in.gcount() != kst_len) {
-      return core::fail(core::ErrorCode::kRead, "short read");
-    }
-  }
-  return open_ole_buffer(vec_data);
+  return std::move(ole);
 }
 
 auto open_ole_buffer(std::span<const std::byte> sp_data)
     -> core::Result<OleFile> {
-  return parse_ole(sp_data);
+  OleFile ole;
+  ole.vec_data.assign(sp_data.begin(), sp_data.end());
+  auto res_load{load_ole(ole)};
+  if (!res_load) {
+    return std::unexpected{res_load.error()};
+  }
+  return std::move(ole);
 }
 
 auto ole_read_stream(const OleFile& ole, std::string_view str_name)

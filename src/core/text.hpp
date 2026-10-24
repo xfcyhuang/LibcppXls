@@ -2,82 +2,18 @@
 
 import std;
 
-#include "core/bytes.hpp"
-
 namespace cppxls::core {
 
-inline auto utf8_push(std::string& str_out, std::uint32_t u4_cp) -> void {
-  if (u4_cp < 0x80) [[likely]] {
-    str_out.push_back(static_cast<char>(u4_cp));
-  } else if (u4_cp < 0x800) {
-    str_out.push_back(static_cast<char>(0xC0 | (u4_cp >> 6)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
-  } else if (u4_cp < 0x10000) {
-    str_out.push_back(static_cast<char>(0xE0 | (u4_cp >> 12)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
-  } else {
-    str_out.push_back(static_cast<char>(0xF0 | (u4_cp >> 18)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 12) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
-  }
-}
+auto utf8_push(std::string& str_out, std::uint32_t u4_cp) -> void;
 
-inline auto latin1_push(std::string& str_out, std::uint8_t u1_ch) -> void {
-  utf8_push(str_out, u1_ch);
-}
+auto latin1_push(std::string& str_out, std::uint8_t u1_ch) -> void;
 
-[[nodiscard]] inline auto decode_utf16_span(std::span<const std::byte> sp_raw)
-    -> std::string {
-  std::string str_out;
-  str_out.reserve(sp_raw.size());
-  for (std::size_t st_i{0}; st_i + 1 < sp_raw.size(); st_i += 2) {
-    const std::uint16_t ku2_hi{u2_at(sp_raw, st_i)};
-    if (ku2_hi >= 0xD800 && ku2_hi <= 0xDBFF) {
-      if (st_i + 3 < sp_raw.size()) {
-        const std::uint16_t ku2_lo{u2_at(sp_raw, st_i + 2)};
-        if (ku2_lo >= 0xDC00 && ku2_lo <= 0xDFFF) {
-          utf8_push(str_out, 0x10000 +
-                                 ((static_cast<std::uint32_t>(ku2_hi - 0xD800)
-                                   << 10) |
-                                  (ku2_lo - 0xDC00)));
-          st_i += 2;
-          continue;
-        }
-        utf8_push(str_out, 0xFFFD);
-        utf8_push(str_out, ku2_lo < 0xD800 || ku2_lo > 0xDFFF
-                               ? ku2_lo
-                               : 0xFFFD);
-        st_i += 2;
-        continue;
-      }
-      utf8_push(str_out, 0xFFFD);
-      continue;
-    }
-    if (ku2_hi >= 0xDC00 && ku2_hi <= 0xDFFF) {
-      utf8_push(str_out, 0xFFFD);
-      continue;
-    }
-    utf8_push(str_out, ku2_hi);
-  }
-  return str_out;
-}
+[[nodiscard]] auto decode_utf16_span(std::span<const std::byte> sp_raw)
+    -> std::string;
 
-[[nodiscard]] inline auto decode_latin1_span(
-    std::span<const std::byte> sp_raw) -> std::string {
-  std::string str_out;
-  str_out.reserve(sp_raw.size());
-  for (const std::byte b_ch : sp_raw) {
-    latin1_push(str_out, static_cast<std::uint8_t>(b_ch));
-  }
-  return str_out;
-}
+[[nodiscard]] auto decode_latin1_span(std::span<const std::byte> sp_raw)
+    -> std::string;
 
-inline auto strip_trailing_nulls(std::string& str_io) -> void {
-  while (!str_io.empty() && str_io.back() == '\0') {
-    str_io.pop_back();
-  }
-}
+auto strip_trailing_nulls(std::string& str_io) -> void;
 
 }
