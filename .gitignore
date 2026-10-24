@@ -1,0 +1,17 @@
+# 编译生成目录（架构文档第三节：不入库）
+Build/
+
+# codegraph 索引（派生数据）
+.codegraph/
+
+# 编辑器/系统杂项
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# 消毒器/硬化编排构建目录（同 Build/，不入库）
+BuildAsan/
+BuildHard/
+__pycache__/
+*.pyc
