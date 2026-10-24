@@ -43,7 +43,7 @@ elseif(CPPXLS_HARDENED)
   list(APPEND CPPXLS_COMMON_FLAGS -D_FORTIFY_SOURCE=3
     -fstack-protector-strong -fPIE)
   list(APPEND CPPXLS_PCM_FLAGS -fstack-protector-strong)
-  list(APPEND CPPXLS_LINK_FLAGS -pie -Wl,--dynamicbase,--nxcompat)
+  list(APPEND CPPXLS_LINK_FLAGS -Wl,--dynamicbase,--nxcompat)
 endif()
 
 get_filename_component(CPPXLS_BIN_DIR ${CMAKE_CXX_COMPILER} DIRECTORY)
@@ -90,14 +90,17 @@ enable_testing()
 foreach(CPPXLS_CASE IN ITEMS label_oob font_oob boundsheet_oob format_oob
     sst_cont_flag dir_surrogate formula_nan masked_error dims_extent
     grid_sparse merged_underflow bof_check hostile_fat sst_continue_oob
-    biff5_formula_string datemode)
+    biff5_formula_string datemode sst_richrun_continue sst_phonetic_continue
+    sst_astral merge_fullcol merge_fullrow blank_cell globals_nobof
+    sheet_type_gate)
   add_test(NAME ${CPPXLS_CASE} COMMAND xls_unit ${CPPXLS_CASE})
 endforeach()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   add_test(NAME cross_check_xlrd
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Script/cross_check_xlrd.py)
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Script/cross_check_xlrd.py
+            --dump=$<TARGET_FILE:xls_csv_dump>)
   add_test(NAME cross_check_synth
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Script/check_synth.py
             $<TARGET_FILE:xls_csv_dump>)

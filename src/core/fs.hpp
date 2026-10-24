@@ -6,7 +6,7 @@ import std;
 
 namespace cppxls::core {
 
-[[nodiscard]] auto read_file_bytes(std::string_view str_path)
+[[nodiscard]] auto read_file_bytes(const std::filesystem::path& pth_file)
     -> Result<std::vector<std::byte>>;
 
 }

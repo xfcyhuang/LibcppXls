@@ -72,9 +72,8 @@ struct Cell {
   std::optional<std::string> opt_str;
   std::uint32_t u4_sst{kU4SstNone};
   double fp8_value{0.0};
-  std::uint16_t u2_colspan{0};
-  std::uint16_t u2_rowspan{0};
-  bool b_hidden{false};
+  std::uint32_t u4_colspan{0};
+  std::uint32_t u4_rowspan{0};
   bool b_bool{false};
   bool b_err{false};
   std::uint8_t u1_errcode{0};
@@ -93,9 +92,17 @@ struct ColInfoRec {
   std::uint16_t u2_flags{0};
 };
 
+struct MergeRange {
+  std::uint16_t u2_r1{0};
+  std::uint16_t u2_r2{0};
+  std::uint16_t u2_c1{0};
+  std::uint16_t u2_c2{0};
+};
+
 struct Worksheet {
   std::vector<RowData> vec_rows;
   std::vector<ColInfoRec> vec_colinfo;
+  std::vector<MergeRange> vec_merges;
   std::uint16_t u2_defcolwidth{0};
   std::uint16_t u2_maxcol{0};
 };
@@ -113,7 +120,7 @@ struct Workbook {
   bool b_biff5{false};
 };
 
-[[nodiscard]] auto open_workbook_file(std::string_view str_path)
+[[nodiscard]] auto open_workbook_file(const std::filesystem::path& pth_file)
     -> core::Result<Workbook>;
 
 [[nodiscard]] auto open_workbook_buffer(std::span<const std::byte> sp_data)

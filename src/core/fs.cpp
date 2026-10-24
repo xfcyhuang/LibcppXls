@@ -4,9 +4,9 @@ import std;
 
 namespace cppxls::core {
 
-auto read_file_bytes(std::string_view str_path)
+auto read_file_bytes(const std::filesystem::path& pth_file)
     -> Result<std::vector<std::byte>> {
-  std::ifstream fs_in{std::string{str_path}, std::ios::binary};
+  std::ifstream fs_in{pth_file, std::ios::binary};
   if (!fs_in) {
     return fail(ErrorCode::kOpen, "unable to open file");
   }

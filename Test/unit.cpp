@@ -267,9 +267,9 @@ auto case_merged_underflow() -> int {
   }
   for (const cppxls::reader::RowData& row : res->vec_rows) {
     for (const cppxls::reader::Cell& cell : row.vec_cells) {
-      if (cell.u2_rowspan > 1 || cell.u2_colspan > 1) {
+      if (cell.u4_rowspan > 1 || cell.u4_colspan > 1) {
         std::println("span r{} c{} rowspan {} colspan {}", row.u2_index,
-                     cell.u2_col, cell.u2_rowspan, cell.u2_colspan);
+                     cell.u2_col, cell.u4_rowspan, cell.u4_colspan);
         return 1;
       }
     }
@@ -306,6 +306,62 @@ auto case_sst_continue_oob() -> int {
   if (wb.vec_sst.size() != 1 || wb.vec_sst[0] != "A") {
     std::println("sst size {} [0]={}", wb.vec_sst.size(),
                  wb.vec_sst.empty() ? "?" : wb.vec_sst[0]);
+    return 1;
+  }
+  return 0;
+}
+
+auto case_sst_richrun_continue() -> int {
+  ByteBuilder sst;
+  sst.u4(2).u4(2).u2(3).u1(0x08).u2(2).raw("AAA").u2(0).u2(0);
+  ByteBuilder cont;
+  cont.u2(1).u2(1).u2(2).u1(0).raw("BB");
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), boundsheet(0), rec(0x00FC, sst.take()),
+       rec(0x003C, cont.take()), eof_rec(), pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  if (wb.vec_sst.size() != 2 || wb.vec_sst[0] != "AAA" || wb.vec_sst[1] != "BB") {
+    std::println("sst size {} [0]={} [1]={}", wb.vec_sst.size(),
+                 wb.vec_sst.size() > 0 ? wb.vec_sst[0] : std::string{"?"},
+                 wb.vec_sst.size() > 1 ? wb.vec_sst[1] : std::string{"?"});
+    return 1;
+  }
+  return 0;
+}
+
+auto case_sst_phonetic_continue() -> int {
+  ByteBuilder sst;
+  sst.u4(2).u4(2).u2(3).u1(0x04).u4(8).raw("AAA").u1(0x11).u1(0x22);
+  ByteBuilder cont;
+  cont.u1(0x33).u1(0x44).u1(0x55).u1(0x66).u1(0x77).u1(0x88);
+  cont.u2(2).u1(0).raw("CC");
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), boundsheet(0), rec(0x00FC, sst.take()),
+       rec(0x003C, cont.take()), eof_rec(), pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  if (wb.vec_sst.size() != 2 || wb.vec_sst[0] != "AAA" || wb.vec_sst[1] != "CC") {
+    std::println("sst size {} [0]={} [1]={}", wb.vec_sst.size(),
+                 wb.vec_sst.size() > 0 ? wb.vec_sst[0] : std::string{"?"},
+                 wb.vec_sst.size() > 1 ? wb.vec_sst[1] : std::string{"?"});
+    return 1;
+  }
+  return 0;
+}
+
+auto case_sst_astral() -> int {
+  ByteBuilder sst;
+  sst.u4(2).u4(2);
+  sst.u2(2).u1(0x01).u2(0xD83D).u2(0xDE00);
+  sst.u2(2).u1(0).raw("BB");
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), boundsheet(0), rec(0x00FC, sst.take()), eof_rec(),
+       pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  if (wb.vec_sst.size() != 2 || wb.vec_sst[0] != "\xF0\x9F\x98\x80"
+      || wb.vec_sst[1] != "BB") {
+    std::println("sst size {} [0]={} [1]={}", wb.vec_sst.size(),
+                 wb.vec_sst.size() > 0 ? wb.vec_sst[0] : std::string{"?"},
+                 wb.vec_sst.size() > 1 ? wb.vec_sst[1] : std::string{"?"});
     return 1;
   }
   return 0;
@@ -352,6 +408,106 @@ auto case_datemode() -> int {
   const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
   if (!wb.b_1904) {
     std::println("b_1904 false");
+    return 1;
+  }
+  return 0;
+}
+
+auto case_merge_fullcol() -> int {
+  ByteBuilder merged;
+  merged.u2(1).u2(0).u2(65535).u2(0).u2(0);
+  ByteBuilder number;
+  number.u2(0).u2(0).u2(0).f8(1.5);
+  const std::vector<std::byte> vec_stream{globals_then(join(
+      {bof_sheet(), rec(0x0203, number.take()), rec(0x00E5, merged.take()),
+       eof_rec()}))};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  auto res{cppxls::reader::parse_worksheet(wb, 0)};
+  if (!res) {
+    std::println("parse failed: {}", res.error().str_message);
+    return 1;
+  }
+  const cppxls::reader::Cell* p{sheet_cell(*res, 0, 0)};
+  if (res->vec_merges.size() != 1 || res->vec_rows.size() != 65536
+      || p == nullptr || p->u4_rowspan != 65536 || p->u4_colspan != 1
+      || !res->vec_rows[100].vec_cells.empty()) {
+    std::println("merges {} rows {} rowspan {}", res->vec_merges.size(),
+                 res->vec_rows.size(), p == nullptr ? 0 : p->u4_rowspan);
+    return 1;
+  }
+  return 0;
+}
+
+auto case_merge_fullrow() -> int {
+  ByteBuilder merged;
+  merged.u2(1).u2(0).u2(0).u2(0).u2(255);
+  ByteBuilder number;
+  number.u2(0).u2(0).u2(0).f8(1.5);
+  const std::vector<std::byte> vec_stream{globals_then(join(
+      {bof_sheet(), rec(0x0203, number.take()), rec(0x00E5, merged.take()),
+       eof_rec()}))};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  auto res{cppxls::reader::parse_worksheet(wb, 0)};
+  if (!res) {
+    std::println("parse failed: {}", res.error().str_message);
+    return 1;
+  }
+  const cppxls::reader::Cell* p{sheet_cell(*res, 0, 0)};
+  if (res->vec_merges.size() != 1 || res->vec_rows.size() != 1
+      || p == nullptr || p->u4_rowspan != 1 || p->u4_colspan != 256
+      || res->vec_rows[0].vec_cells.size() != 1) {
+    std::println("merges {} rows {} colspan {}", res->vec_merges.size(),
+                 res->vec_rows.size(), p == nullptr ? 0 : p->u4_colspan);
+    return 1;
+  }
+  return 0;
+}
+
+auto case_blank_cell() -> int {
+  ByteBuilder blank;
+  blank.u2(1).u2(2).u2(77);
+  const std::vector<std::byte> vec_stream{globals_then(join(
+      {bof_sheet(), rec(0x0201, blank.take()), eof_rec()}))};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  auto res{cppxls::reader::parse_worksheet(wb, 0)};
+  if (!res) {
+    std::println("parse failed: {}", res.error().str_message);
+    return 1;
+  }
+  const cppxls::reader::Cell* p{sheet_cell(*res, 1, 2)};
+  if (res->vec_rows.size() != 2 || p == nullptr
+      || p->e_id != cppxls::reader::Record::kBlank || p->u2_xf != 77) {
+    std::println("rows {} cell {}", res->vec_rows.size(),
+                 p == nullptr ? "missing" : "present");
+    return 1;
+  }
+  return 0;
+}
+
+auto case_globals_nobof() -> int {
+  ByteBuilder number;
+  number.u2(0).u2(0).u2(0).f8(1.5);
+  const std::vector<std::byte> vec_stream{join(
+      {rec(0x0203, number.take()), bof_globals(), eof_rec(),
+       pad_rec(kStPad)})};
+  auto res{cppxls::reader::open_workbook_buffer(
+      make_ole(vec_stream, default_spec()))};
+  if (res || res.error().u1_code != cppxls::core::ErrorCode::kParse) {
+    std::println("error code {}", res ? 0 : static_cast<int>(res.error().u1_code));
+    return 1;
+  }
+  return 0;
+}
+
+auto case_sheet_type_gate() -> int {
+  ByteBuilder bs;
+  bs.u4(0).u1(0).u1(2).u1(1).u1(0).raw("C");
+  const std::vector<std::byte> vec_stream{join(
+      {bof_globals(), rec(0x0085, bs.take()), eof_rec(), pad_rec(kStPad)})};
+  const cppxls::reader::Workbook wb{open_wb(make_ole(vec_stream, default_spec()))};
+  auto res{cppxls::reader::parse_worksheet(wb, 0)};
+  if (res || res.error().u1_code != cppxls::core::ErrorCode::kParse) {
+    std::println("error code {}", res ? 0 : static_cast<int>(res.error().u1_code));
     return 1;
   }
   return 0;
@@ -438,6 +594,30 @@ auto main(int argc, char** argv) -> int {
   }
   if (str_case == "datemode") {
     return case_datemode();
+  }
+  if (str_case == "sst_richrun_continue") {
+    return case_sst_richrun_continue();
+  }
+  if (str_case == "sst_phonetic_continue") {
+    return case_sst_phonetic_continue();
+  }
+  if (str_case == "sst_astral") {
+    return case_sst_astral();
+  }
+  if (str_case == "merge_fullcol") {
+    return case_merge_fullcol();
+  }
+  if (str_case == "merge_fullrow") {
+    return case_merge_fullrow();
+  }
+  if (str_case == "blank_cell") {
+    return case_blank_cell();
+  }
+  if (str_case == "globals_nobof") {
+    return case_globals_nobof();
+  }
+  if (str_case == "sheet_type_gate") {
+    return case_sheet_type_gate();
   }
   std::println("unknown case: {}", str_case);
   return 2;

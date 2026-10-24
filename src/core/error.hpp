@@ -2,8 +2,6 @@
 
 import std;
 
-#include "core/error.hpp"
-
 namespace cppxls::core {
 
 enum class ErrorCode : std::uint8_t {
@@ -42,7 +40,7 @@ using Result = std::expected<T, Error>;
     case kNullArgument: return "null argument";
     case kStreamNotFound: return "ole stream not found";
   }
-  return "unknown error";
+  std::unreachable();
 }
 
 }

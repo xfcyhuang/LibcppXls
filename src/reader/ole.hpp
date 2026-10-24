@@ -24,10 +24,13 @@ struct OleFile {
   std::uint64_t u8_root_size{0};
 };
 
-[[nodiscard]] auto open_ole_file(std::string_view str_path)
+[[nodiscard]] auto open_ole_file(const std::filesystem::path& pth_file)
     -> core::Result<OleFile>;
 
 [[nodiscard]] auto open_ole_buffer(std::span<const std::byte> sp_data)
+    -> core::Result<OleFile>;
+
+[[nodiscard]] auto open_ole_owned(std::vector<std::byte> vec_data)
     -> core::Result<OleFile>;
 
 [[nodiscard]] auto ole_read_stream(const OleFile& ole,

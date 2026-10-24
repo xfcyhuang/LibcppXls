@@ -201,24 +201,23 @@ constexpr std::size_t kStDirEntry = 128;
 
 }
 
-auto open_ole_file(std::string_view str_path) -> core::Result<OleFile> {
-  auto res_data{core::read_file_bytes(str_path)};
+auto open_ole_file(const std::filesystem::path& pth_file) -> core::Result<OleFile> {
+  auto res_data{core::read_file_bytes(pth_file)};
   if (!res_data) {
     return std::unexpected{res_data.error()};
   }
-  OleFile ole;
-  ole.vec_data = std::move(*res_data);
-  auto res_load{load_ole(ole)};
-  if (!res_load) {
-    return std::unexpected{res_load.error()};
-  }
-  return std::move(ole);
+  return open_ole_owned(std::move(*res_data));
 }
 
 auto open_ole_buffer(std::span<const std::byte> sp_data)
     -> core::Result<OleFile> {
+  return open_ole_owned(
+      std::vector<std::byte>{sp_data.begin(), sp_data.end()});
+}
+
+auto open_ole_owned(std::vector<std::byte> vec_data) -> core::Result<OleFile> {
   OleFile ole;
-  ole.vec_data.assign(sp_data.begin(), sp_data.end());
+  ole.vec_data = std::move(vec_data);
   auto res_load{load_ole(ole)};
   if (!res_load) {
     return std::unexpected{res_load.error()};
@@ -244,7 +243,19 @@ auto ole_read_stream(const OleFile& ole, std::string_view str_name)
     if (!res_ids) {
       return std::unexpected{res_ids.error()};
     }
-    std::vector<std::byte> vec_out{concat_sectors(ole, *res_ids)};
+    const std::uint64_t ku8_need_sectors{
+        (p_entry->u8_size + ole.st_sector - 1) / ole.st_sector};
+    std::vector<std::byte> vec_out;
+    vec_out.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(
+                        res_ids->size(), ku8_need_sectors)) *
+                    ole.st_sector);
+    for (const std::uint32_t u4_id : *res_ids) {
+      const std::span<const std::byte> sp_sec{sector_span(ole, u4_id)};
+      vec_out.insert(vec_out.end(), sp_sec.begin(), sp_sec.end());
+      if (vec_out.size() >= p_entry->u8_size) {
+        break;
+      }
+    }
     if (vec_out.size() < p_entry->u8_size) {
       return core::fail(core::ErrorCode::kParse, "stream truncated");
     }
@@ -261,8 +272,12 @@ auto ole_read_stream(const OleFile& ole, std::string_view str_name)
   if (!res_ids) {
     return std::unexpected{res_ids.error()};
   }
+  const std::uint64_t ku8_need_sectors{
+      (p_entry->u8_size + ole.st_mini - 1) / ole.st_mini};
   std::vector<std::byte> vec_out;
-  vec_out.reserve(res_ids->size() * ole.st_mini);
+  vec_out.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(
+                      res_ids->size(), ku8_need_sectors)) *
+                  ole.st_mini);
   for (const std::uint32_t u4_id : *res_ids) {
     const std::uint64_t u8_off{
         static_cast<std::uint64_t>(u4_id) * ole.st_mini};
@@ -272,6 +287,9 @@ auto ole_read_stream(const OleFile& ole, std::string_view str_name)
     vec_out.insert(
         vec_out.end(), vec_root.begin() + static_cast<std::ptrdiff_t>(u8_off),
         vec_root.begin() + static_cast<std::ptrdiff_t>(u8_off + ole.st_mini));
+    if (vec_out.size() >= p_entry->u8_size) {
+      break;
+    }
   }
   if (vec_out.size() < p_entry->u8_size) {
     return core::fail(core::ErrorCode::kParse, "stream truncated");

@@ -62,6 +62,9 @@ auto main(int argc, char** argv) -> int {
   std::println("sheets: {} biff5: {} codepage: {}", wb.vec_sheets.size(),
                wb.b_biff5, wb.u2_codepage);
   for (std::size_t st_i{0}; st_i < wb.vec_sheets.size(); ++st_i) {
+    if (wb.vec_sheets[st_i].u1_type != 0) {
+      continue;
+    }
     const auto res_ws{cppxls::reader::parse_worksheet(wb, st_i)};
     if (!res_ws) {
       std::println("=== {} (parse failed: {})", wb.vec_sheets[st_i].str_name,

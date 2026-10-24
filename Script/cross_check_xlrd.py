@@ -70,7 +70,13 @@ def cells_agree(path: Path) -> list[str]:
 
 
 def main() -> int:
-    args = sys.argv[1:]
+    global DUMP
+    args = []
+    for arg in sys.argv[1:]:
+        if arg.startswith("--dump="):
+            DUMP = Path(arg[len("--dump="):])
+        else:
+            args.append(arg)
     paths = [Path(a) for a in args]
     if not paths:
         paths = sorted((ROOT / "Test" / "files").glob("*.xls"))

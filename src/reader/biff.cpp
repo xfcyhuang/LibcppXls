@@ -52,6 +52,7 @@ struct StrSource {
   std::size_t st_pos{0};
   bool b_unicode{false};
   bool b_bad{false};
+  bool b_chars{false};
 };
 
 auto src_advance(StrSource& src) -> void {
@@ -66,8 +67,12 @@ auto src_advance(StrSource& src) -> void {
       continue;
     }
     src.sp_cur = rec.sp_body;
-    src.st_pos = 1;
-    src.b_unicode = (u1_at(rec.sp_body, 0) & 0x01) != 0;
+    if (src.b_chars) {
+      src.st_pos = 1;
+      src.b_unicode = (u1_at(rec.sp_body, 0) & 0x01) != 0;
+    } else {
+      src.st_pos = 0;
+    }
     return;
   }
   src.b_bad = true;
@@ -122,6 +127,7 @@ auto src_skip(StrSource& src, std::uint64_t u8_n) -> void {
 
 auto read_xl_string(StrSource& src, std::uint16_t u2_cch,
                     std::uint8_t u1_flags) -> std::string {
+  src.b_chars = false;
   const std::uint16_t ku2_runs{
       (u1_flags & 0x08) != 0 ? src_get_u2(src).value_or(0) : std::uint16_t{0}};
   const std::uint32_t ku4_ext{
@@ -129,48 +135,75 @@ auto read_xl_string(StrSource& src, std::uint16_t u2_cch,
                              : std::uint32_t{0}};
   std::string str_out;
   str_out.reserve(std::size_t{u2_cch} * 3);
-  for (std::uint16_t u2_i{0}; u2_i < u2_cch; ++u2_i) {
-    if (src.b_bad) {
-      break;
-    }
-    if (!src.b_unicode) {
-      const auto o_ch{src_get_u8(src)};
-      if (!o_ch) {
+  src.b_chars = true;
+  std::uint32_t u4_left{u2_cch};
+  while (u4_left > 0 && !src.b_bad) {
+    if (src.st_pos >= src.sp_cur.size()) {
+      src_advance(src);
+      if (src.b_bad || src.st_pos >= src.sp_cur.size()) {
         src.b_bad = true;
         break;
       }
-      core::latin1_push(str_out, *o_ch);
-    } else {
-      const auto o_hi{src_get_u2(src)};
-      if (!o_hi) {
+    }
+    const std::size_t kst_avail{src.sp_cur.size() - src.st_pos};
+    if (!src.b_unicode) {
+      const std::size_t kst_take{
+          std::min(kst_avail, static_cast<std::size_t>(u4_left))};
+      for (const std::byte b_ch : src.sp_cur.subspan(src.st_pos, kst_take)) {
+        core::latin1_push(str_out, static_cast<std::uint8_t>(b_ch));
+      }
+      src.st_pos += kst_take;
+      u4_left -= static_cast<std::uint32_t>(kst_take);
+      continue;
+    }
+    const std::size_t kst_units{
+        std::min(kst_avail / 2, static_cast<std::size_t>(u4_left))};
+    if (kst_units == 0) {
+      src.st_pos = src.sp_cur.size();
+      continue;
+    }
+    std::size_t st_done{0};
+    while (st_done < kst_units) {
+      const std::uint16_t ku2_unit{u2_at(src.sp_cur, src.st_pos + st_done * 2)};
+      if (ku2_unit >= 0xD800 && ku2_unit <= 0xDFFF) {
         break;
       }
-      const std::uint16_t ku2_hi{*o_hi};
-      if (ku2_hi >= 0xD800 && ku2_hi <= 0xDBFF) {
-        const auto o_lo{src_get_u2(src)};
-        if (!o_lo) {
-          break;
-        }
-        const std::uint16_t ku2_lo{*o_lo};
-        if (ku2_lo >= 0xDC00 && ku2_lo <= 0xDFFF) {
-          core::utf8_push(str_out, 0x10000 +
-                                       ((static_cast<std::uint32_t>(
-                                             ku2_hi - 0xD800)
-                                         << 10) |
-                                        (ku2_lo - 0xDC00)));
-        } else {
-          core::utf8_push(str_out, 0xFFFD);
-          core::utf8_push(str_out, ku2_lo < 0xD800 || ku2_lo > 0xDFFF
-                                       ? ku2_lo
-                                       : 0xFFFD);
-        }
-      } else if (ku2_hi >= 0xDC00 && ku2_hi <= 0xDFFF) {
-        core::utf8_push(str_out, 0xFFFD);
-      } else {
-        core::utf8_push(str_out, ku2_hi);
-      }
+      core::utf8_push(str_out, ku2_unit);
+      st_done += 1;
     }
+    src.st_pos += st_done * 2;
+    u4_left -= static_cast<std::uint32_t>(st_done);
+    if (st_done == kst_units) {
+      continue;
+    }
+    const auto o_hi{src_get_u2(src)};
+    if (!o_hi) {
+      break;
+    }
+    const std::uint16_t ku2_hi{*o_hi};
+    if (ku2_hi >= 0xDC00 && ku2_hi <= 0xDFFF) {
+      core::utf8_push(str_out, 0xFFFD);
+      u4_left -= 1;
+      continue;
+    }
+    const auto o_lo{src_get_u2(src)};
+    if (!o_lo) {
+      break;
+    }
+    const std::uint16_t ku2_lo{*o_lo};
+    if (ku2_lo >= 0xDC00 && ku2_lo <= 0xDFFF) {
+      core::utf8_push(str_out,
+                      0x10000 + ((static_cast<std::uint32_t>(ku2_hi - 0xD800)
+                                     << 10) |
+                                 (ku2_lo - 0xDC00)));
+    } else {
+      core::utf8_push(str_out, 0xFFFD);
+      core::utf8_push(str_out,
+                      ku2_lo < 0xD800 || ku2_lo > 0xDFFF ? ku2_lo : 0xFFFD);
+    }
+    u4_left -= 2;
   }
+  src.b_chars = false;
   src_skip(src, static_cast<std::uint64_t>(ku2_runs) * 4);
   src_skip(src, ku4_ext);
   return str_out;
@@ -214,6 +247,9 @@ auto read_xl_string(StrSource& src, std::uint16_t u2_cch,
 auto parse_globals(Workbook& wb) -> core::Result<void> {
   const std::vector<RecView> vec_recs{
       walk_records(wb.vec_stream, 0, true)};
+  if (vec_recs.empty() || vec_recs.front().e_id != Record::kBof) {
+    return core::fail(core::ErrorCode::kParse, "workbook globals bof missing");
+  }
   for (std::size_t st_i{0}; st_i < vec_recs.size(); ++st_i) {
     const RecView& rec{vec_recs[st_i]};
     const std::span<const std::byte> sp{rec.sp_body};
@@ -284,7 +320,8 @@ auto parse_globals(Workbook& wb) -> core::Result<void> {
                       .sp_cur = sp,
                       .st_pos = 8,
                       .b_unicode = false,
-                      .b_bad = false};
+                      .b_bad = false,
+                      .b_chars = false};
         for (std::uint32_t u4_n{0}; u4_n < ku4_unique && !src.b_bad; ++u4_n) {
           const std::uint16_t ku2_cch{src_get_u2(src).value_or(0)};
           if (src.b_bad) {
@@ -381,23 +418,8 @@ auto parse_globals(Workbook& wb) -> core::Result<void> {
   return {};
 }
 
-}
-
-auto open_workbook_file(std::string_view str_path) -> core::Result<Workbook> {
-  auto res_data{core::read_file_bytes(str_path)};
-  if (!res_data) {
-    return std::unexpected{res_data.error()};
-  }
-  return open_workbook_buffer(*res_data);
-}
-
-auto open_workbook_buffer(std::span<const std::byte> sp_data)
-    -> core::Result<Workbook> {
-  auto res_ole{open_ole_buffer(sp_data)};
-  if (!res_ole) {
-    return std::unexpected{res_ole.error()};
-  }
-  auto res_stream{ole_read_workbook_stream(*res_ole)};
+[[nodiscard]] auto load_workbook(OleFile&& ole) -> core::Result<Workbook> {
+  auto res_stream{ole_read_workbook_stream(ole)};
   if (!res_stream) {
     return std::unexpected{res_stream.error()};
   }
@@ -410,10 +432,37 @@ auto open_workbook_buffer(std::span<const std::byte> sp_data)
   return std::move(wb);
 }
 
+}
+
+auto open_workbook_file(const std::filesystem::path& pth_file)
+    -> core::Result<Workbook> {
+  auto res_data{core::read_file_bytes(pth_file)};
+  if (!res_data) {
+    return std::unexpected{res_data.error()};
+  }
+  auto res_ole{open_ole_owned(std::move(*res_data))};
+  if (!res_ole) {
+    return std::unexpected{res_ole.error()};
+  }
+  return load_workbook(std::move(*res_ole));
+}
+
+auto open_workbook_buffer(std::span<const std::byte> sp_data)
+    -> core::Result<Workbook> {
+  auto res_ole{open_ole_buffer(sp_data)};
+  if (!res_ole) {
+    return std::unexpected{res_ole.error()};
+  }
+  return load_workbook(std::move(*res_ole));
+}
+
 auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
     -> core::Result<Worksheet> {
   if (st_idx >= wb.vec_sheets.size()) {
     return core::fail(core::ErrorCode::kParse, "worksheet index out of range");
+  }
+  if (wb.vec_sheets[st_idx].u1_type != 0) {
+    return core::fail(core::ErrorCode::kParse, "not a worksheet substream");
   }
   const std::uint32_t ku4_pos{wb.vec_sheets[st_idx].u4_filepos};
   if (ku4_pos >= wb.vec_stream.size()) {
@@ -444,8 +493,8 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
       }
     } else if (rec.e_id == Record::kMergedCells && sp.size() >= 2) {
       const std::uint16_t ku2_count{u2_at(sp, 0)};
-      for (std::uint16_t u2_n{0}; u2_n < ku2_count; ++u2_n) {
-        const std::size_t kst_off{2 + std::size_t{u2_n} * 8};
+      for (std::uint32_t u4_n{0}; u4_n < ku2_count; ++u4_n) {
+        const std::size_t kst_off{2 + std::size_t{u4_n} * 8};
         if (kst_off + 8 > sp.size()) {
           break;
         }
@@ -542,14 +591,14 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
           break;
         }
         const std::uint16_t ku2_row{u2_at(sp, 0)};
-        const std::uint16_t ku2_first{u2_at(sp, 2)};
-        const std::uint16_t ku2_last{u2_at(sp, sp.size() - 2)};
-        for (std::uint16_t ku2_c{ku2_first}; ku2_c <= ku2_last; ++ku2_c) {
-          const std::size_t kst_off{4 + (std::size_t{ku2_c} - ku2_first) * 6};
+        const std::uint32_t ku4_first{u2_at(sp, 2)};
+        const std::uint32_t ku4_last{u2_at(sp, sp.size() - 2)};
+        for (std::uint32_t u4_c{ku4_first}; u4_c <= ku4_last; ++u4_c) {
+          const std::size_t kst_off{4 + std::size_t{u4_c - ku4_first} * 6};
           if (kst_off + 6 > sp.size() - 2) {
             break;
           }
-          if (Cell* p{fn_store(ku2_row, ku2_c)}) {
+          if (Cell* p{fn_store(ku2_row, static_cast<std::uint16_t>(u4_c))}) {
             p->e_id = Record::kRk;
             p->u2_xf = u2_at(sp, kst_off);
             p->fp8_value = rk_to_double(u4_at(sp, kst_off + 2));
@@ -562,17 +611,27 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
           break;
         }
         const std::uint16_t ku2_row{u2_at(sp, 0)};
-        const std::uint16_t ku2_first{u2_at(sp, 2)};
-        const std::uint16_t ku2_last{u2_at(sp, sp.size() - 2)};
-        for (std::uint16_t ku2_c{ku2_first}; ku2_c <= ku2_last; ++ku2_c) {
-          const std::size_t kst_off{4 + (std::size_t{ku2_c} - ku2_first) * 2};
+        const std::uint32_t ku4_first{u2_at(sp, 2)};
+        const std::uint32_t ku4_last{u2_at(sp, sp.size() - 2)};
+        for (std::uint32_t u4_c{ku4_first}; u4_c <= ku4_last; ++u4_c) {
+          const std::size_t kst_off{4 + std::size_t{u4_c - ku4_first} * 2};
           if (kst_off + 2 > sp.size() - 2) {
             break;
           }
-          if (Cell* p{fn_store(ku2_row, ku2_c)}) {
+          if (Cell* p{fn_store(ku2_row, static_cast<std::uint16_t>(u4_c))}) {
             p->e_id = Record::kBlank;
             p->u2_xf = u2_at(sp, kst_off);
           }
+        }
+        break;
+      }
+      case Record::kBlank: {
+        if (sp.size() < 6) {
+          break;
+        }
+        if (Cell* p{fn_store(u2_at(sp, 0), u2_at(sp, 2))}) {
+          p->e_id = Record::kBlank;
+          p->u2_xf = u2_at(sp, 4);
         }
         break;
       }
@@ -721,8 +780,8 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
           break;
         }
         const std::uint16_t ku2_count{u2_at(sp, 0)};
-        for (std::uint16_t u2_n{0}; u2_n < ku2_count; ++u2_n) {
-          const std::size_t kst_off{2 + std::size_t{u2_n} * 8};
+        for (std::uint32_t u4_n{0}; u4_n < ku2_count; ++u4_n) {
+          const std::size_t kst_off{2 + std::size_t{u4_n} * 8};
           if (kst_off + 8 > sp.size()) {
             break;
           }
@@ -733,19 +792,10 @@ auto parse_worksheet(const Workbook& wb, std::size_t st_idx)
           if (ku2_r2 < ku2_r1 || ku2_c2 < ku2_c1) {
             continue;
           }
+          ws.vec_merges.push_back(MergeRange{ku2_r1, ku2_r2, ku2_c1, ku2_c2});
           if (Cell* p{fn_store(ku2_r1, ku2_c1)}) {
-            p->u2_rowspan = ku2_r2 - ku2_r1 + 1;
-            p->u2_colspan = ku2_c2 - ku2_c1 + 1;
-          }
-          for (std::uint16_t ku2_r{ku2_r1}; ku2_r <= ku2_r2; ++ku2_r) {
-            for (std::uint16_t ku2_c{ku2_c1}; ku2_c <= ku2_c2; ++ku2_c) {
-              if (ku2_r == ku2_r1 && ku2_c == ku2_c1) {
-                continue;
-              }
-              if (Cell* p{fn_store(ku2_r, ku2_c)}) {
-                p->b_hidden = true;
-              }
-            }
+            p->u4_rowspan = ku2_r2 - ku2_r1 + 1;
+            p->u4_colspan = ku2_c2 - ku2_c1 + 1;
           }
         }
         break;

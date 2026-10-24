@@ -9,17 +9,20 @@ auto utf8_push(std::string& str_out, std::uint32_t u4_cp) -> void {
   if (u4_cp < 0x80) [[likely]] {
     str_out.push_back(static_cast<char>(u4_cp));
   } else if (u4_cp < 0x800) {
-    str_out.push_back(static_cast<char>(0xC0 | (u4_cp >> 6)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
+    const char arr[2]{static_cast<char>(0xC0 | (u4_cp >> 6)),
+                      static_cast<char>(0x80 | (u4_cp & 0x3F))};
+    str_out.append(arr, 2);
   } else if (u4_cp < 0x10000) {
-    str_out.push_back(static_cast<char>(0xE0 | (u4_cp >> 12)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
+    const char arr[3]{static_cast<char>(0xE0 | (u4_cp >> 12)),
+                      static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)),
+                      static_cast<char>(0x80 | (u4_cp & 0x3F))};
+    str_out.append(arr, 3);
   } else {
-    str_out.push_back(static_cast<char>(0xF0 | (u4_cp >> 18)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 12) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)));
-    str_out.push_back(static_cast<char>(0x80 | (u4_cp & 0x3F)));
+    const char arr[4]{static_cast<char>(0xF0 | (u4_cp >> 18)),
+                      static_cast<char>(0x80 | ((u4_cp >> 12) & 0x3F)),
+                      static_cast<char>(0x80 | ((u4_cp >> 6) & 0x3F)),
+                      static_cast<char>(0x80 | (u4_cp & 0x3F))};
+    str_out.append(arr, 4);
   }
 }
 
